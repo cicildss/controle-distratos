@@ -181,7 +181,8 @@ async function refreshLinked() {
   if (body.error) {
     els.sync.textContent = `Erro ao sincronizar SharePoint: ${body.error}`;
   } else {
-    els.sync.textContent = `${body.distratos.toLocaleString("pt-BR")} distratos + ${body.rotas.toLocaleString("pt-BR")} rotas vinculadas`;
+    const fonte = body.distratosSource && body.distratosSource.includes(":\\") ? "arquivo local autenticado" : "SharePoint";
+    els.sync.textContent = `${body.distratos.toLocaleString("pt-BR")} distratos + ${body.rotas.toLocaleString("pt-BR")} rotas vinculadas (${fonte})`;
   }
 }
 

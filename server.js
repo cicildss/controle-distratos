@@ -3,6 +3,8 @@ const multer = require("multer");
 const XLSX = require("xlsx");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
+const os = require("os");
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -10,6 +12,10 @@ const PORT = Number(process.env.PORT || 8095);
 const LIVE_API_BASE = process.env.LIVE_API_BASE || "http://10.1.100.10:5001/api";
 const DISTRATOS_URL = process.env.DISTRATOS_URL || "https://ecopowerenergia.sharepoint.com/:x:/r/sites/DOCUMENTOSJURIDICOS/Documentos%20Compartilhados/CONTROLE%20JUR%C3%8DDICO%20-%20ONLINE.xlsx?d=wadaab69db0b84e9a8ec9b40c1d6cfc21&csf=1&web=1&e=yXTBmF";
 const ROTAS_URL = process.env.ROTAS_URL || "https://ecopowerenergia-my.sharepoint.com/:x:/r/personal/leonardo_borges_ecopower_com_br/Documents/PLANILHA%20DE%20ROTAS%201.xlsx?d=wd1545cb620c3407d8153668e9c63f4a5&csf=1&web=1&e=zA0YEK";
+const DEFAULT_DISTRATOS_PATH = path.join(os.homedir(), "Downloads", "CONTROLE JURÍDICO - ONLINE.xlsx");
+const DEFAULT_ROTAS_PATH = path.join(os.homedir(), "Downloads", "PLANILHA DE ROTAS 1.xlsx");
+const DISTRATOS_PATH = process.env.DISTRATOS_PATH || DEFAULT_DISTRATOS_PATH;
+const ROTAS_PATH = process.env.ROTAS_PATH || DEFAULT_ROTAS_PATH;
 
 const DISTRATO_COLUMNS = [
   "DATA DA FINALIZACAO", "TERMO ASSINADO", "TIPO DO DISTRATO", "STATUS", "CLIENTE",
@@ -345,18 +351,28 @@ async function fetchWorkbookBuffer(url) {
   return buffer;
 }
 
+async function readWorkbookBuffer(sourcePath, sourceUrl) {
+  if (sourcePath && fs.existsSync(sourcePath)) {
+    return { buffer: fs.readFileSync(sourcePath), source: sourcePath };
+  }
+  const buffer = await fetchWorkbookBuffer(sourceUrl);
+  return { buffer, source: sourceUrl };
+}
+
 async function refreshLinkedSheets() {
   try {
-    const [distratosBuffer, rotasBuffer] = await Promise.all([
-      fetchWorkbookBuffer(DISTRATOS_URL),
-      fetchWorkbookBuffer(ROTAS_URL)
+    const [distratosFile, rotasFile] = await Promise.all([
+      readWorkbookBuffer(DISTRATOS_PATH, DISTRATOS_URL),
+      readWorkbookBuffer(ROTAS_PATH, ROTAS_URL)
     ]);
-    distratos = parseWorkbook(distratosBuffer, "distratos");
-    rotasLinked = parseWorkbook(rotasBuffer, "rotas");
+    distratos = parseWorkbook(distratosFile.buffer, "distratos");
+    rotasLinked = parseWorkbook(rotasFile.buffer, "rotas");
     linkedCache = {
       loadedAt: new Date().toISOString(),
       distratos: distratos.length,
       rotas: rotasLinked.length,
+      distratosSource: distratosFile.source,
+      rotasSource: rotasFile.source,
       error: null
     };
   } catch (error) {
@@ -410,6 +426,8 @@ app.get("/api/state", (_req, res) => {
     rotasLinked: rotasLinked.length,
     linkedLoadedAt: linkedCache.loadedAt,
     linkedError: linkedCache.error,
+    linkedDistratosSource: linkedCache.distratosSource,
+    linkedRotasSource: linkedCache.rotasSource,
     liveRoutes: liveCache.rows.length,
     liveLoadedAt: liveCache.loadedAt,
     liveError: liveCache.error
