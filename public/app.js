@@ -1,9 +1,10 @@
 const state = {
-  source: "live",
+  source: "linked",
   tab: "todos",
   rows: [],
   filtered: [],
-  lastPayload: null
+  lastPayload: null,
+  activeDetailIndex: null
 };
 
 const el = (id) => document.getElementById(id);
@@ -13,6 +14,7 @@ const els = {
   uploadRotas: el("upload-rotas"),
   fonteRotas: el("fonte-rotas"),
   btnAtualizar: el("btn-atualizar"),
+  btnTema: el("btn-tema"),
   btnExportar: el("btn-exportar"),
   btnLimpar: el("btn-limpar"),
   busca: el("busca"),
@@ -24,7 +26,8 @@ const els = {
   tbodyRotas: el("tbody-rotas"),
   modal: el("modal-overlay"),
   modalTitulo: el("modal-titulo"),
-  modalBody: el("modal-body")
+  modalBody: el("modal-body"),
+  btnSalvarRelatorio: el("btn-salvar-relatorio")
 };
 
 function get(obj, keys) {
@@ -64,7 +67,15 @@ function distrato(row) {
     situacao: get(d, ["SITUACAO"]),
     data_situacao: get(d, ["DATA DA SITUACAO"]),
     data_finalizacao: get(d, ["DATA DA FINALIZACAO"]),
-    termo_assinado: get(d, ["TERMO ASSINADO"])
+    termo_assinado: get(d, ["TERMO ASSINADO"]),
+    relatorio: get(d, ["RELATORIO"]),
+    cpf_cnpj: get(d, ["CPF/CNPJ"]),
+    n_protheus: get(d, ["N PROTHEUS"]),
+    contrato_proposta: get(d, ["N CONTRATO/PROPOSTA"]),
+    data_assinatura_contrato: get(d, ["DATA ASSINATURA DO CONTRATO", "DATA DO CONTRATO"]),
+    objeto_contratado: get(d, ["OBJETO CONTRATADO", "MATERIAIS"]),
+    cidade_instalacao: get(d, ["CIDADE DE INSTALACAO", "CIDADE"]),
+    valor_negociado: get(d, ["VALOR NEGOCIADO", "VALOR CONTRATO"])
   };
 }
 
@@ -163,6 +174,17 @@ async function refreshLive() {
   else els.sync.textContent = `EcoPower Energia - ${body.rows.toLocaleString("pt-BR")} rotas em tempo real`;
 }
 
+async function refreshLinked() {
+  els.sync.textContent = "Sincronizando planilhas vinculadas...";
+  const response = await fetch("/api/linked/refresh", { method: "POST" });
+  const body = await response.json();
+  if (body.error) {
+    els.sync.textContent = `Erro ao sincronizar SharePoint: ${body.error}`;
+  } else {
+    els.sync.textContent = `${body.distratos.toLocaleString("pt-BR")} distratos + ${body.rotas.toLocaleString("pt-BR")} rotas vinculadas`;
+  }
+}
+
 async function loadMatches() {
   const response = await fetch(`/api/matches?source=${state.source}`);
   const payload = await response.json();
@@ -171,6 +193,78 @@ async function loadMatches() {
   updateKpis(payload);
   buildFilterOptions();
   applyFilters();
+}
+
+function reportKey(row) {
+  const d = distrato(row);
+  return ["relatorio", d.cliente, d.cidade, d.franqueado].map((v) => String(v || "").trim().toUpperCase()).join("::");
+}
+
+function getReport(row) {
+  return getReportData(row).ocorrencia || "";
+}
+
+function defaultReportData(row) {
+  const d = distrato(row);
+  return {
+    ocorrencia: d.relatorio || "",
+    evidencias: "",
+    conclusao: "",
+    images: []
+  };
+}
+
+function getReportData(row) {
+  const raw = localStorage.getItem(reportKey(row));
+  if (!raw) return defaultReportData(row);
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") return { ...defaultReportData(row), ocorrencia: parsed };
+    return { ...defaultReportData(row), ...parsed, images: Array.isArray(parsed.images) ? parsed.images : [] };
+  } catch {
+    return { ...defaultReportData(row), ocorrencia: raw };
+  }
+}
+
+function hasReport(row) {
+  const report = getReportData(row);
+  return [report.ocorrencia, report.evidencias, report.conclusao].some((v) => String(v || "").trim()) || report.images.length > 0;
+}
+
+function saveReport() {
+  if (state.activeDetailIndex == null) return;
+  const row = state.rows[state.activeDetailIndex];
+  if (!row) return;
+  const current = getReportData(row);
+  const next = {
+    ocorrencia: el("relatorio-ocorrencia")?.value.trim() || "",
+    evidencias: el("relatorio-evidencias")?.value.trim() || "",
+    conclusao: el("relatorio-conclusao")?.value.trim() || "",
+    images: current.images
+  };
+  document.querySelectorAll("[data-image-caption]").forEach((input) => {
+    const index = Number(input.dataset.imageCaption);
+    if (next.images[index]) next.images[index].caption = input.value.trim();
+  });
+  localStorage.setItem(reportKey(row), JSON.stringify(next));
+  applyFilters();
+  openDetail(state.activeDetailIndex);
+}
+
+function reportHeader(d) {
+  return [
+    ["TIPO DE DISTRATO", d.tipo],
+    ["NOME DO CLIENTE", d.cliente],
+    ["CPF/CNPJ", d.cpf_cnpj],
+    ["N. PROTHEUS", d.n_protheus],
+    ["N. CONTRATO/PROPOSTA", d.contrato_proposta],
+    ["DATA ASSINATURA DO CONTRATO", fmtData(d.data_assinatura_contrato)],
+    ["OBJETO CONTRATADO", d.objeto_contratado],
+    ["CIDADE DE INSTALAÇÃO", d.cidade_instalacao || `${text(d.cidade)} / ${text(d.uf)}`],
+    ["VALOR NEGOCIADO", fmtMoeda(parseMoney(d.valor_negociado))],
+    ["FORMA DE PAGAMENTO", d.forma_pgt],
+    ["FRANQUEADO", d.franqueado]
+  ];
 }
 
 function buildFilterOptions() {
@@ -201,7 +295,7 @@ function updateKpis(payload) {
   el("kpi-finalizados").textContent = finalizados.toLocaleString("pt-BR");
   el("kpi-valor").textContent = valor ? valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 1, notation: valor >= 1000000 ? "compact" : "standard" }) : "R$ 0";
   el("kpi-rotas").textContent = rotas.toLocaleString("pt-BR");
-  el("kpi-rotas-sub").textContent = payload.source === "live" ? "via tempo real" : "via planilha";
+  el("kpi-rotas-sub").textContent = payload.source === "live" ? "via API rotas" : payload.source === "linked" ? "via SharePoint" : "via upload";
   el("count-total").textContent = total.toLocaleString("pt-BR");
 }
 
@@ -233,7 +327,7 @@ function applyFilters() {
 
 function renderTabela() {
   if (!state.filtered.length) {
-    els.tbodyDistratos.innerHTML = `<tr><td colspan="14" class="empty-row">Envie a planilha de distratos ou ajuste os filtros.</td></tr>`;
+    els.tbodyDistratos.innerHTML = `<tr><td colspan="15" class="empty-row">Sincronize as planilhas vinculadas, envie a planilha de distratos ou ajuste os filtros.</td></tr>`;
   } else {
     els.tbodyDistratos.innerHTML = state.filtered.map((row) => {
       const d = distrato(row);
@@ -254,6 +348,7 @@ function renderTabela() {
           <td class="muted">${fmtData(d.data_finalizacao)}</td>
           <td><span class="badge badge-blue">${escapeHtml(text(d.situacao))}</span></td>
           <td>${row.matchStatus === "sem-rota" ? matchBadge(row) : `<strong>${escapeHtml(text(r.rota || r.programacao))}</strong> ${matchBadge(row)}`}</td>
+          <td>${hasReport(row) ? `<span class="badge badge-green">Preenchido</span>` : `<span class="badge badge-amber">Preencher</span>`}</td>
         </tr>
       `;
     }).join("");
@@ -292,6 +387,7 @@ function renderRotas() {
 }
 
 function openDetail(index) {
+  state.activeDetailIndex = index;
   const row = state.rows[index];
   const d = distrato(row);
   const r = rota(row);
@@ -315,8 +411,161 @@ function openDetail(index) {
       <div class="modal-section-title">Rota vinculada</div>
       ${row.matchStatus !== "sem-rota" ? rotaCard(r, row) : `<div class="empty-rota">Nenhuma rota vinculada a este cliente</div>`}
     </div>
+    ${reportSection(row, d)}
   `;
+  bindReportControls(row);
   els.modal.classList.add("open");
+}
+
+function reportSection(row, d) {
+  const report = getReportData(row);
+  const header = reportHeader(d);
+  return `
+    <div class="modal-section">
+      <div class="modal-section-title">Relatório</div>
+      <div class="report-table">
+        <div class="report-row"><div class="report-label" style="grid-column:1 / -1;text-align:center">RELATÓRIO</div></div>
+        ${header.map(([label, value]) => `
+          <div class="report-row">
+            <div class="report-label">${escapeHtml(label)}</div>
+            <div class="report-value">${escapeHtml(text(value))}</div>
+          </div>
+        `).join("")}
+      </div>
+      <label class="field">
+        <span class="field-label">1. OCORRÊNCIA VERIFICADA</span>
+        <textarea id="relatorio-ocorrencia" class="report-editor" placeholder="Descreva a ocorrência verificada no processo...">${escapeHtml(report.ocorrencia)}</textarea>
+      </label>
+      <label class="field">
+        <span class="field-label">2. EVIDÊNCIAS DO PROCESSO / prints, links, comprovantes e histórico</span>
+        <textarea id="relatorio-evidencias" class="report-editor" placeholder="Cole links do Fluig, observações, comprovantes e referências dos prints...">${escapeHtml(report.evidencias)}</textarea>
+      </label>
+      <label class="field">
+        <span class="field-label">3. CONCLUSÃO / providências</span>
+        <textarea id="relatorio-conclusao" class="report-editor small" placeholder="Informe a conclusão jurídica e próximas providências...">${escapeHtml(report.conclusao)}</textarea>
+      </label>
+      <div class="report-attachments">
+        <div class="report-actions">
+          <label class="btn btn-outline file-btn">Anexar imagens
+            <input id="relatorio-imagens" type="file" accept="image/*" multiple />
+          </label>
+          <button class="btn btn-outline" id="btn-gerar-pdf" type="button">Gerar PDF</button>
+        </div>
+        <div id="relatorio-imagens-lista" class="image-list">
+          ${renderReportImages(report.images)}
+        </div>
+      </div>
+      <div class="report-actions">
+        <span class="report-status">${hasReport(row) ? "Relatório preenchido para este cliente." : "Ainda sem relatório salvo para este cliente."}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderReportImages(images) {
+  if (!images.length) return `<div class="empty-rota">Nenhuma imagem anexada.</div>`;
+  return images.map((img, index) => `
+    <div class="image-item">
+      <img src="${img.dataUrl}" alt="${escapeHtml(img.name || "Imagem do relatório")}" />
+      <div class="image-meta">
+        <strong>${escapeHtml(img.name || `Imagem ${index + 1}`)}</strong>
+        <input type="text" data-image-caption="${index}" value="${escapeHtml(img.caption || "")}" placeholder="Legenda da imagem" />
+        <button class="btn btn-outline" type="button" data-remove-image="${index}">Remover</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function bindReportControls(row) {
+  const input = el("relatorio-imagens");
+  if (input) {
+    input.addEventListener("change", async (event) => {
+      const files = [...event.target.files].slice(0, 8);
+      const data = getReportData(row);
+      for (const file of files) {
+        const dataUrl = await fileToDataUrl(file);
+        data.images.push({ name: file.name, caption: "", dataUrl });
+      }
+      localStorage.setItem(reportKey(row), JSON.stringify(data));
+      openDetail(state.activeDetailIndex);
+    });
+  }
+  document.querySelectorAll("[data-remove-image]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const data = getReportData(row);
+      data.images.splice(Number(btn.dataset.removeImage), 1);
+      localStorage.setItem(reportKey(row), JSON.stringify(data));
+      openDetail(state.activeDetailIndex);
+    });
+  });
+  const pdfButton = el("btn-gerar-pdf");
+  if (pdfButton) pdfButton.addEventListener("click", () => generateReportPdf(row));
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function generateReportPdf(row) {
+  saveReport();
+  const freshRow = state.rows[state.activeDetailIndex] || row;
+  const d = distrato(freshRow);
+  const report = getReportData(freshRow);
+  const headerRows = reportHeader(d).map(([label, value]) => `
+    <tr><th>${escapeHtml(label)}</th><td>${escapeHtml(text(value))}</td></tr>
+  `).join("");
+  const images = report.images.map((img) => `
+    <figure>
+      <img src="${img.dataUrl}" alt="${escapeHtml(img.name || "Imagem")}" />
+      <figcaption>${escapeHtml(img.caption || img.name || "Evidência")}</figcaption>
+    </figure>
+  `).join("");
+
+  const win = window.open("", "_blank");
+  if (!win) {
+    alert("O navegador bloqueou a janela do PDF. Libere pop-ups para este site.");
+    return;
+  }
+  win.document.write(`
+    <!doctype html>
+    <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8" />
+        <title>RELATÓRIO_distrato_${escapeHtml(text(d.cliente)).replace(/\s+/g, "_")}</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #111827; margin: 32px; }
+          h1 { text-align: center; font-size: 18px; background: #c7d3e5; border: 1px solid #111; margin: 0; padding: 8px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 28px; }
+          th, td { border: 1px solid #111; padding: 6px 8px; font-size: 12px; vertical-align: top; }
+          th { width: 260px; text-align: left; background: #f3f4f6; }
+          h2 { font-size: 14px; margin-top: 22px; text-transform: uppercase; }
+          p { white-space: pre-wrap; line-height: 1.5; font-size: 13px; }
+          figure { break-inside: avoid; margin: 18px 0; }
+          img { max-width: 100%; border: 1px solid #d1d5db; }
+          figcaption { font-size: 12px; color: #374151; margin-top: 6px; }
+          @media print { body { margin: 18mm; } }
+        </style>
+      </head>
+      <body>
+        <h1>RELATÓRIO</h1>
+        <table>${headerRows}</table>
+        <h2>1. OCORRÊNCIA VERIFICADA:</h2>
+        <p>${escapeHtml(report.ocorrencia || "-")}</p>
+        <h2>2. EVIDÊNCIAS DO PROCESSO:</h2>
+        <p>${escapeHtml(report.evidencias || "-")}</p>
+        ${images ? `<h2>Imagens anexadas:</h2>${images}` : ""}
+        <h2>3. CONCLUSÃO / PROVIDÊNCIAS:</h2>
+        <p>${escapeHtml(report.conclusao || "-")}</p>
+        <script>window.onload = () => { window.print(); };</script>
+      </body>
+    </html>
+  `);
+  win.document.close();
 }
 
 function section(title, fields) {
@@ -357,6 +606,7 @@ function rotaCard(r, row) {
 
 function closeModal() {
   els.modal.classList.remove("open");
+  state.activeDetailIndex = null;
 }
 
 function limparFiltros() {
@@ -369,11 +619,11 @@ function limparFiltros() {
 }
 
 function exportarDados() {
-  const header = ["Cliente", "Franqueado", "Cidade", "UF", "Status", "Tipo", "Rota", "Status rota", "Confianca"];
+  const header = ["Cliente", "Franqueado", "Cidade", "UF", "Status", "Tipo", "Rota", "Status rota", "Confianca", "Relatorio"];
   const lines = state.filtered.map((row) => {
     const d = distrato(row);
     const r = rota(row);
-    return [d.cliente, d.franqueado, d.cidade, d.uf, d.status, d.tipo, r.rota || r.programacao, r.status, row.matchScore].map(csvCell).join(";");
+    return [d.cliente, d.franqueado, d.cidade, d.uf, d.status, d.tipo, r.rota || r.programacao, r.status, row.matchScore, getReport(row)].map(csvCell).join(";");
   });
   const blob = new Blob([[header.join(";"), ...lines].join("\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
@@ -381,6 +631,12 @@ function exportarDados() {
   a.download = "controle-distratos.csv";
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem("controleDistratosTheme", theme);
+  els.btnTema.textContent = theme === "dark" ? "Modo claro" : "Modo escuro";
 }
 
 function csvCell(value) {
@@ -429,13 +685,20 @@ els.uploadRotas.addEventListener("change", async (event) => {
 
 els.fonteRotas.addEventListener("change", async () => {
   state.source = els.fonteRotas.value;
+  if (state.source === "linked") await refreshLinked();
+  if (state.source === "live") await refreshLive();
   await loadMatches();
 });
 els.btnAtualizar.addEventListener("click", async () => {
+  if (state.source === "linked") await refreshLinked();
   if (state.source === "live") await refreshLive();
   await loadMatches();
 });
 els.btnExportar.addEventListener("click", exportarDados);
+els.btnTema.addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+});
+els.btnSalvarRelatorio.addEventListener("click", saveReport);
 els.btnLimpar.addEventListener("click", limparFiltros);
 [els.busca, els.filtroStatus, els.filtroTipo, els.filtroUf, els.filtroArea].forEach((node) => node.addEventListener("input", applyFilters));
 el("btn-fechar").addEventListener("click", closeModal);
@@ -445,13 +708,18 @@ els.modal.addEventListener("click", (event) => {
 });
 
 setInterval(async () => {
-  if (state.source === "live") {
+  if (state.source === "linked") {
+    await refreshLinked();
+    await loadMatches();
+  } else if (state.source === "live") {
     await refreshLive();
     await loadMatches();
   }
 }, 60000);
 
 (async function init() {
-  await refreshLive();
+  applyTheme(localStorage.getItem("controleDistratosTheme") || "light");
+  els.fonteRotas.value = state.source;
+  await refreshLinked();
   await loadMatches();
 })();

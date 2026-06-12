@@ -31,10 +31,12 @@
             <input id="upload-rotas" type="file" accept=".xlsx,.xls,.csv" />
           </label>
           <select id="fonte-rotas" title="Fonte das rotas">
+            <option value="linked">Planilhas vinculadas</option>
             <option value="live">Rotas em tempo real</option>
             <option value="upload">Planilha de rotas</option>
           </select>
-          <button class="btn btn-outline" id="btn-atualizar">Atualizar</button>
+          <button class="btn btn-outline" id="btn-atualizar">Sincronizar</button>
+          <button class="btn btn-outline" id="btn-tema">Modo escuro</button>
           <button class="btn btn-primary" id="btn-exportar">Exportar</button>
         </div>
       </div>
@@ -118,6 +120,7 @@
                     <th>Data finalizacao</th>
                     <th>Situacao</th>
                     <th>Rota</th>
+                    <th>Relatorio</th>
                   </tr>
                 </thead>
                 <tbody id="tbody-distratos"></tbody>
@@ -165,6 +168,7 @@
         </div>
         <div class="modal-body" id="modal-body"></div>
         <div class="modal-foot">
+          <button class="btn btn-primary" id="btn-salvar-relatorio">Salvar relatorio</button>
           <button class="btn btn-outline" id="btn-fechar-rodape">Fechar</button>
         </div>
       </div>

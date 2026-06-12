@@ -8,13 +8,15 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 const PORT = Number(process.env.PORT || 8095);
 const LIVE_API_BASE = process.env.LIVE_API_BASE || "http://10.1.100.10:5001/api";
+const DISTRATOS_URL = process.env.DISTRATOS_URL || "https://ecopowerenergia.sharepoint.com/:x:/r/sites/DOCUMENTOSJURIDICOS/Documentos%20Compartilhados/CONTROLE%20JUR%C3%8DDICO%20-%20ONLINE.xlsx?d=wadaab69db0b84e9a8ec9b40c1d6cfc21&csf=1&web=1&e=yXTBmF";
+const ROTAS_URL = process.env.ROTAS_URL || "https://ecopowerenergia-my.sharepoint.com/:x:/r/personal/leonardo_borges_ecopower_com_br/Documents/PLANILHA%20DE%20ROTAS%201.xlsx?d=wd1545cb620c3407d8153668e9c63f4a5&csf=1&web=1&e=zA0YEK";
 
 const DISTRATO_COLUMNS = [
   "DATA DA FINALIZACAO", "TERMO ASSINADO", "TIPO DO DISTRATO", "STATUS", "CLIENTE",
   "ATENDENTE", "FRANQUEADO", "CIDADE", "UF", "MOTIVO", "AREA CAUSADORA", "MATERIAIS",
   "KWP", "FORMA DE PGT", "FINANCIADORA", "DATA DO CONTRATO", "DATA LIBERACAO FINANCEIRA",
   "PRAZO ENTREGA/INSTALACAO", "DIAS DE ATRASO", "VALOR CONTRATO", "VALOR REBATE",
-  "VALOR RECEBIDO", "VALOR PAGO", "RESULTADO", "SITUACAO", "DATA DA SITUACAO"
+  "VALOR RECEBIDO", "VALOR PAGO", "RESULTADO", "SITUACAO", "DATA DA SITUACAO", "RELATORIO"
 ];
 
 const ROUTE_COLUMNS = [
@@ -32,6 +34,8 @@ const ROUTE_COLUMNS = [
 
 let distratos = [];
 let rotasUpload = [];
+let rotasLinked = [];
+let linkedCache = { loadedAt: null, distratos: 0, rotas: 0, error: null };
 let liveCache = { loadedAt: null, rows: [], error: null };
 
 app.use(cors());
@@ -86,6 +90,14 @@ function canonicalHeader(header) {
   if (compact === "CIDADE" || compact.includes("MUNICIPIO")) return "CIDADE";
   if (compact === "UF" || compact.endsWith("UF")) return "UF";
   if (compact.includes("MOTIVO")) return "MOTIVO";
+  if (compact.includes("RELATORIO")) return "RELATORIO";
+  if (compact.includes("CPF") || compact.includes("CNPJ")) return "CPF/CNPJ";
+  if (compact.includes("PROTHEUS")) return "N PROTHEUS";
+  if (compact.includes("CONTRATO") && compact.includes("PROPOSTA")) return "N CONTRATO/PROPOSTA";
+  if (compact.includes("ASSINATURA") && compact.includes("CONTRATO")) return "DATA ASSINATURA DO CONTRATO";
+  if (compact.includes("OBJETO") && compact.includes("CONTRATADO")) return "OBJETO CONTRATADO";
+  if (compact.includes("CIDADE") && compact.includes("INSTALACAO")) return "CIDADE DE INSTALACAO";
+  if (compact.includes("VALOR") && compact.includes("NEGOCIADO")) return "VALOR NEGOCIADO";
   if ((compact.includes("AREA") || compact.startsWith("REA")) && compact.includes("CAUSADORA")) return "AREA CAUSADORA";
   if (compact.includes("MATERIA")) return "MATERIAIS";
   if (compact === "KWP" || compact.includes("KWP")) return "KWP";
@@ -307,6 +319,52 @@ function liveRowFromApi(row) {
   };
 }
 
+function downloadUrl(url) {
+  const parsed = new URL(url);
+  parsed.searchParams.set("download", "1");
+  parsed.searchParams.delete("web");
+  return parsed.toString();
+}
+
+async function fetchWorkbookBuffer(url) {
+  const response = await fetch(downloadUrl(url), {
+    headers: {
+      "User-Agent": "Mozilla/5.0 ControleDistratos/1.0",
+      "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*"
+    },
+    redirect: "follow"
+  });
+  if (!response.ok) throw new Error(`Falha ao baixar planilha (${response.status})`);
+  const contentType = response.headers.get("content-type") || "";
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const startsLikeZip = buffer[0] === 0x50 && buffer[1] === 0x4b;
+  if (!startsLikeZip && contentType.includes("text/html")) {
+    throw new Error("SharePoint retornou HTML/login em vez de XLSX. Verifique permissao do link.");
+  }
+  return buffer;
+}
+
+async function refreshLinkedSheets() {
+  try {
+    const [distratosBuffer, rotasBuffer] = await Promise.all([
+      fetchWorkbookBuffer(DISTRATOS_URL),
+      fetchWorkbookBuffer(ROTAS_URL)
+    ]);
+    distratos = parseWorkbook(distratosBuffer, "distratos");
+    rotasLinked = parseWorkbook(rotasBuffer, "rotas");
+    linkedCache = {
+      loadedAt: new Date().toISOString(),
+      distratos: distratos.length,
+      rotas: rotasLinked.length,
+      error: null
+    };
+  } catch (error) {
+    linkedCache = { ...linkedCache, error: error.message };
+  }
+  return linkedCache;
+}
+
 async function refreshLiveRoutes() {
   const url = `${LIVE_API_BASE}/carteira/rotas/inversores-clientes?limit=50000&offset=0`;
   try {
@@ -340,10 +398,18 @@ app.post("/api/live/refresh", async (_req, res) => {
   res.json({ rows: cache.rows.length, loadedAt: cache.loadedAt, error: cache.error });
 });
 
+app.post("/api/linked/refresh", async (_req, res) => {
+  const cache = await refreshLinkedSheets();
+  res.json(cache);
+});
+
 app.get("/api/state", (_req, res) => {
   res.json({
     distratos: distratos.length,
     rotasUpload: rotasUpload.length,
+    rotasLinked: rotasLinked.length,
+    linkedLoadedAt: linkedCache.loadedAt,
+    linkedError: linkedCache.error,
     liveRoutes: liveCache.rows.length,
     liveLoadedAt: liveCache.loadedAt,
     liveError: liveCache.error
@@ -351,14 +417,15 @@ app.get("/api/state", (_req, res) => {
 });
 
 app.get("/api/matches", (req, res) => {
-  const source = req.query.source === "upload" ? rotasUpload : liveCache.rows;
+  const sourceName = req.query.source === "upload" ? "upload" : req.query.source === "live" ? "live" : "linked";
+  const source = sourceName === "upload" ? rotasUpload : sourceName === "live" ? liveCache.rows : rotasLinked;
   const rows = buildRows(source);
   const total = rows.length;
   const matched = rows.filter((r) => r.matchStatus !== "sem-rota").length;
   const revisar = rows.filter((r) => r.matchStatus === "revisar").length;
   res.json({
     generatedAt: new Date().toISOString(),
-    source: req.query.source === "upload" ? "upload" : "live",
+    source: sourceName,
     columns: { distratos: DISTRATO_COLUMNS, rotas: ROUTE_COLUMNS },
     totals: { total, matched, revisar, semRota: total - matched },
     rows
@@ -367,6 +434,7 @@ app.get("/api/matches", (req, res) => {
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+refreshLinkedSheets();
 refreshLiveRoutes();
 
 app.listen(PORT, () => {
