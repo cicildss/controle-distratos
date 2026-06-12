@@ -71,18 +71,125 @@ function toDisplayValue(value) {
   return value ?? "";
 }
 
-function parseWorkbook(buffer) {
-  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
+function canonicalHeader(header) {
+  const h = normalizeHeader(header);
+  const compact = h.replace(/[^A-Z0-9]/g, "");
 
-  return rows
-    .map((row) => {
+  if (compact.includes("DATA") && (compact.includes("FINALIZACAO") || compact.includes("FINALIZA"))) return "DATA DA FINALIZACAO";
+  if (compact.includes("TERMO") && compact.includes("ASSINADO")) return "TERMO ASSINADO";
+  if (compact.includes("TIPO") && compact.includes("DISTRATO")) return "TIPO DO DISTRATO";
+  if (compact === "STATUS" || compact.includes("STATUS")) return "STATUS";
+  if (compact === "CLIENTE") return "CLIENTE";
+  if (compact === "CLIENTES") return "CLIENTES";
+  if (compact.includes("ATENDENTE")) return "ATENDENTE";
+  if (compact.includes("FRANQUEADO")) return "FRANQUEADO";
+  if (compact === "CIDADE" || compact.includes("MUNICIPIO")) return "CIDADE";
+  if (compact === "UF" || compact.endsWith("UF")) return "UF";
+  if (compact.includes("MOTIVO")) return "MOTIVO";
+  if ((compact.includes("AREA") || compact.startsWith("REA")) && compact.includes("CAUSADORA")) return "AREA CAUSADORA";
+  if (compact.includes("MATERIA")) return "MATERIAIS";
+  if (compact === "KWP" || compact.includes("KWP")) return "KWP";
+  if (compact.includes("FORM") && (compact.includes("PGT") || compact.includes("PAG"))) return "FORMA DE PGT";
+  if (compact.includes("FINANCIADORA")) return "FINANCIADORA";
+  if (compact.includes("DATADOCONTRATO")) return "DATA DO CONTRATO";
+  if (compact.includes("LIBERACAO") && compact.includes("FINANCEIRA")) return "DATA LIBERACAO FINANCEIRA";
+  if (compact.includes("PRAZO") && (compact.includes("ENTREGA") || compact.includes("INSTALACAO"))) return "PRAZO ENTREGA/INSTALACAO";
+  if (compact.includes("DIAS") && compact.includes("ATRASO")) return "DIAS DE ATRASO";
+  if (compact.includes("VALOR") && compact.includes("CONTRATO")) return "VALOR CONTRATO";
+  if (compact.includes("VALOR") && compact.includes("REBATE")) return "VALOR REBATE";
+  if (compact.includes("VALOR") && compact.includes("RECEBIDO")) return "VALOR RECEBIDO";
+  if (compact.includes("VALOR") && compact.includes("PAGO")) return "VALOR PAGO";
+  if (compact.includes("RESULTADO")) return "RESULTADO";
+  if (compact.includes("SITUACAO") || compact.includes("SITUA")) return "SITUACAO";
+  if (compact.includes("DATADASITUACAO") || compact.includes("DATADASITUA")) return "DATA DA SITUACAO";
+
+  if (compact.includes("DATAINICIAL")) return "DATA INICIAL";
+  if (compact.includes("TIPO") && compact.includes("PROGRAMA")) return "TIPO DE PROGRAMACAO";
+  if (compact.includes("TIPO") && compact.includes("FRETE")) return "TIPO DE FRETE";
+  if (compact.includes("CONFIRMACAO") && compact.includes("PAGAMENTO")) return "NECESSITA DE CONFIRMACAO DE PAGAMENTO?";
+  if (compact.includes("CIA") && compact.includes("ELETRICA")) return "CIA ELETRICA";
+  if (compact.includes("TENSAO")) return "TENSAO";
+  if (compact.includes("PREVISAO") && compact.includes("CARREGAMENTO")) return "PREVISAO DE CARREGAMENTO";
+  if (compact.includes("PROGRAMA")) return "PROGRAMACAO";
+  if (compact === "ROTA") return "ROTA";
+  if (compact.includes("OBSERVACAO")) return "OBSERVACAO";
+  if (compact.includes("DATA") && compact.includes("NEGOCIACAO")) return "DATA DE NEGOCIACAO";
+  if (compact.includes("DATACOMALTERACAO")) return "DATA COM ALTERACAO";
+  if (compact.includes("DTINCPEDIDO") || compact.includes("TOTVS")) return "DT. INC. PEDIDO (TOTVS)";
+  if (compact.includes("PRAZODIAS")) return "PRAZO DIAS";
+  if (compact.includes("VENCIMENTODOCONTRATO")) return "VENCIMENTO DO CONTRATO";
+  if (compact.includes("DIASPARAVENCIMENTO")) return "DIAS PARA VENCIMENTO";
+  if (compact.includes("PEDIDO")) return "PEDIDO";
+  if (compact.includes("CODIGO") && compact.includes("CLIENTE")) return "CODIGO DO CLIENTE";
+  if (compact === "N") return "N";
+  if (compact.includes("MESORREGIAO")) return "MESORREGIAO";
+  if (compact.includes("MICRORREGIAO")) return "MICRORREGIAO";
+  if (compact.includes("REGIAO") || compact.includes("REGIO")) return "REGIAO";
+  if (compact.includes("CRM")) return "CRM";
+  if (compact.includes("TIPO") && compact.includes("ESTRUTURA")) return "TIPO DE ESTRUTURA";
+  if (compact.includes("CODIGO") && compact.includes("PRODUTO")) return "CODIGO DO PRODUTO";
+  if (compact.includes("DESCRICAO") && compact.includes("KIT")) return "DESCRICAO DO KIT";
+  if (compact.includes("ORDEM") && compact.includes("ENTREGA")) return "ORDEM DE ENTREGA";
+  if (compact.includes("REPRESENTANTE")) return "REPRESENTANTE";
+  if (compact.includes("EXECUTIVO")) return "EXECUTIVO";
+  if (compact === "VALOR") return "VALOR";
+  if (compact.includes("ROTAFIXA")) return "ROTA FIXA";
+  if (compact.includes("CATEGORIA") && compact.includes("FRETE")) return "CATEGORIA DE FRETE";
+  if (compact.includes("ETAPA") && compact.includes("PROGRAMACAO")) return "ETAPA DE PROGRAMACAO";
+  if (compact.includes("DATANO") && compact.includes("CARREGAMENTO")) return "DATA NO CARREGAMENTO";
+  if (compact.includes("ROTEIRIZADOR")) return "ROTEIRIZADOR";
+  if (compact.includes("VEICULO")) return "VEICULO";
+
+  return h;
+}
+
+function findSheetName(workbook, type) {
+  if (type === "distratos") {
+    const exact = workbook.SheetNames.find((name) => normalizeHeader(name) === "DISTRATOS");
+    if (exact) return exact;
+    const contains = workbook.SheetNames.find((name) => normalizeHeader(name).includes("DISTRATO"));
+    if (contains) return contains;
+  }
+  return workbook.SheetNames[0];
+}
+
+function scoreHeaderRow(row, type) {
+  const headers = row.map(canonicalHeader);
+  const expected = type === "distratos"
+    ? ["CLIENTE", "CIDADE", "FRANQUEADO", "MOTIVO"]
+    : ["TIPO DE FRETE", "CLIENTES", "CIDADE", "PROGRAMACAO"];
+  return expected.filter((name) => headers.includes(name)).length;
+}
+
+function parseWorkbook(buffer, type) {
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  const sheetName = findSheetName(workbook, type);
+  const sheet = workbook.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false });
+  let headerIndex = 0;
+  let bestScore = -1;
+
+  matrix.forEach((row, index) => {
+    const score = scoreHeaderRow(row, type);
+    if (score > bestScore) {
+      bestScore = score;
+      headerIndex = index;
+    }
+  });
+
+  const headers = (matrix[headerIndex] || []).map(canonicalHeader);
+
+  return matrix
+    .slice(headerIndex + 1)
+    .map((cells) => {
       const normalized = {};
-      for (const [key, val] of Object.entries(row)) {
-        normalized[normalizeHeader(key)] = toDisplayValue(val);
-      }
+      headers.forEach((header, index) => {
+        if (!header) return;
+        const val = toDisplayValue(cells[index]);
+        if (String(val).trim() === "") return;
+        if (normalized[header] === undefined) normalized[header] = val;
+        else normalized[`${header} ${index + 1}`] = val;
+      });
       return normalized;
     })
     .filter((row) => Object.values(row).some((cell) => String(cell).trim() !== ""));
@@ -105,7 +212,21 @@ function nameScore(a, b) {
   return hasTokenOverlap(na, nb) ? 0.52 : 0;
 }
 
+function isRetornoRoute(rota) {
+  const tipoFrete = normalizeText(value(rota, ["TIPO DE FRETE", "CATEGORIA DE FRETE"]));
+  return tipoFrete.includes("RETORNO");
+}
+
+function cityMatches(a, b) {
+  const ca = normalizeText(a);
+  const cb = normalizeText(b);
+  if (!ca || !cb) return false;
+  return ca === cb || cb.includes(ca) || ca.includes(cb);
+}
+
 function matchScore(distrato, rota) {
+  if (!isRetornoRoute(rota)) return 0;
+
   const clienteScore = nameScore(value(distrato, ["CLIENTE"]), value(rota, ["CLIENTES", "CLIENTE"]));
   if (!clienteScore) return 0;
 
@@ -116,9 +237,14 @@ function matchScore(distrato, rota) {
   const franqueadoRota = normalizeText(value(rota, ["FRANQUEADO", "REPRESENTANTE", "EXECUTIVO"]));
   const ufDistrato = normalizeText(value(distrato, ["UF"]));
   const ufRota = normalizeText(value(rota, ["UF"]));
+  const cidadeOk = cityMatches(cidadeDistrato, cidadeRota);
+  const franqueadoOk = franqueadoDistrato && franqueadoRota ? (franqueadoDistrato === franqueadoRota || hasTokenOverlap(franqueadoDistrato, franqueadoRota)) : false;
 
-  if (cidadeDistrato && cidadeRota && (cidadeDistrato === cidadeRota || cidadeRota.includes(cidadeDistrato) || cidadeDistrato.includes(cidadeRota))) score += 0.16;
-  if (franqueadoDistrato && franqueadoRota && (franqueadoDistrato === franqueadoRota || hasTokenOverlap(franqueadoDistrato, franqueadoRota))) score += 0.14;
+  if (cidadeDistrato && cidadeRota && !cidadeOk) return 0;
+  if (franqueadoDistrato && franqueadoRota && !franqueadoOk) return 0;
+
+  if (cidadeOk) score += 0.16;
+  if (franqueadoOk) score += 0.14;
   if (ufDistrato && ufRota && ufRota.includes(ufDistrato)) score += 0.08;
 
   return Math.min(score, 1);
@@ -134,8 +260,9 @@ function bestMatch(distrato, rotas) {
 }
 
 function buildRows(routeSource) {
+  const retornoRoutes = routeSource.filter(isRetornoRoute);
   return distratos.map((distrato) => {
-    const matched = bestMatch(distrato, routeSource);
+    const matched = bestMatch(distrato, retornoRoutes);
     const rota = matched?.rota || {};
     const statusRota = value(rota, ["STATUS", "ETAPA DE PROGRAMACAO", "TIPO DE FRETE", "TIPO PROGRAMACAO"]);
     return {
@@ -199,9 +326,11 @@ async function refreshLiveRoutes() {
 
 app.post("/api/upload/:type", upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Envie um arquivo .xlsx" });
-  const rows = parseWorkbook(req.file.buffer);
-  if (req.params.type === "distratos") distratos = rows;
-  else if (req.params.type === "rotas") rotasUpload = rows;
+  const type = req.params.type;
+  if (type !== "distratos" && type !== "rotas") return res.status(400).json({ error: "Tipo invalido" });
+  const rows = parseWorkbook(req.file.buffer, type);
+  if (type === "distratos") distratos = rows;
+  else if (type === "rotas") rotasUpload = rows;
   else return res.status(400).json({ error: "Tipo invalido" });
   res.json({ rows: rows.length });
 });
