@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Controle de Distratos</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <h2 class="sr-only">Controle de Distratos - painel de gestao de contratos distratados com dados de rota vinculados.</h2>
+
+    <div class="app">
+      <div class="topbar">
+        <div class="topbar-left">
+          <div class="logo-dot"></div>
+          <div>
+            <div class="title-row">
+              <h1>Controle de Distratos</h1>
+              <span class="badge badge-green">Juridico</span>
+            </div>
+            <div class="topbar-sub" id="sync-label">EcoPower Energia - Integrado com API</div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <label class="btn btn-outline file-btn">
+            Planilha distratos
+            <input id="upload-distratos" type="file" accept=".xlsx,.xls,.csv" />
+          </label>
+          <label class="btn btn-outline file-btn">
+            Planilha rotas
+            <input id="upload-rotas" type="file" accept=".xlsx,.xls,.csv" />
+          </label>
+          <select id="fonte-rotas" title="Fonte das rotas">
+            <option value="live">Rotas em tempo real</option>
+            <option value="upload">Planilha de rotas</option>
+          </select>
+          <button class="btn btn-outline" id="btn-atualizar">Atualizar</button>
+          <button class="btn btn-primary" id="btn-exportar">Exportar</button>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="todos">Todos os distratos</button>
+        <button class="tab" data-tab="pendentes">Pendentes</button>
+        <button class="tab" data-tab="emandamento">Em andamento</button>
+        <button class="tab" data-tab="finalizados">Finalizados</button>
+        <button class="tab" data-tab="rotas">Rotas vinculadas</button>
+      </div>
+
+      <div class="content">
+        <div class="kpis">
+          <div class="kpi">
+            <div class="kpi-label">Total de distratos</div>
+            <div class="kpi-value" id="kpi-total">0</div>
+            <div class="kpi-sub">registros carregados</div>
+          </div>
+          <div class="kpi amber">
+            <div class="kpi-label">Pendentes</div>
+            <div class="kpi-value" id="kpi-pendentes">0</div>
+            <div class="kpi-sub">aguardando acao</div>
+          </div>
+          <div class="kpi green">
+            <div class="kpi-label">Finalizados</div>
+            <div class="kpi-value" id="kpi-finalizados">0</div>
+            <div class="kpi-sub">termos assinados</div>
+          </div>
+          <div class="kpi red">
+            <div class="kpi-label">Valor total contratos</div>
+            <div class="kpi-value" id="kpi-valor">R$ 0</div>
+            <div class="kpi-sub">em distratos</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Rotas vinculadas</div>
+            <div class="kpi-value" id="kpi-rotas">0</div>
+            <div class="kpi-sub" id="kpi-rotas-sub">com status ativo</div>
+          </div>
+        </div>
+
+        <div class="filters">
+          <span class="filter-label">Filtros:</span>
+          <input type="text" id="busca" placeholder="Cliente, franqueado ou cidade..." />
+          <select id="filtro-status">
+            <option value="">Status</option>
+          </select>
+          <select id="filtro-tipo">
+            <option value="">Tipo de distrato</option>
+          </select>
+          <select id="filtro-uf">
+            <option value="">UF</option>
+          </select>
+          <select id="filtro-area">
+            <option value="">Area causadora</option>
+          </select>
+          <button class="btn btn-outline" id="btn-limpar">Limpar</button>
+        </div>
+
+        <div id="painel-distratos">
+          <div class="table-wrap">
+            <div class="table-header">
+              <span class="table-title">Distratos</span>
+              <span class="table-count" id="count-label">Exibindo <strong id="count-num">0</strong> de <strong id="count-total">0</strong> registros</span>
+            </div>
+            <div class="tbl-outer">
+              <table id="tabela-distratos">
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th>Franqueado</th>
+                    <th>Cidade / UF</th>
+                    <th>Tipo de distrato</th>
+                    <th>Status</th>
+                    <th>Atendente</th>
+                    <th>Motivo</th>
+                    <th>Area causadora</th>
+                    <th>kWp</th>
+                    <th>Valor contrato</th>
+                    <th>Resultado</th>
+                    <th>Data finalizacao</th>
+                    <th>Situacao</th>
+                    <th>Rota</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-distratos"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="painel-rotas" class="hidden">
+          <div class="table-wrap">
+            <div class="table-header">
+              <span class="table-title">Rotas vinculadas aos distratos</span>
+              <span class="table-count"><strong id="rotas-count">0</strong> rotas encontradas</span>
+            </div>
+            <div class="tbl-outer">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th>Cidade / UF</th>
+                    <th>Rota</th>
+                    <th>Programacao</th>
+                    <th>Tipo de frete</th>
+                    <th>Status retorno</th>
+                    <th>Previsao carregamento</th>
+                    <th>kWp</th>
+                    <th>Etapa programacao</th>
+                    <th>Roteirizador</th>
+                    <th>Confianca</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-rotas"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-overlay">
+      <div class="modal" id="modal-detalhe">
+        <div class="modal-head">
+          <h2 id="modal-titulo">Detalhes do distrato</h2>
+          <button class="icon-btn" id="btn-fechar" aria-label="Fechar">x</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" id="btn-fechar-rodape">Fechar</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
